@@ -1,0 +1,111 @@
+## 一、导入所需要的包
+import requests
+import time
+from bs4 import BeautifulSoup as bs
+import pandas as pd
+import random
+import pymysql
+
+## 二、设置一个贝壳商圈List
+#贝壳商圈名称 手动一个个查验，因为有的商圈名称不仅仅是拼音还带数字（全国重名的商圈）
+business_area = ['yinhu','bagualing','baihua','chegongmiao','chiwei','futianbaoshuiqu','futianzhongxin','huanggang','huangmugang','huaqiangbei','huaqiangnan','jingtian','lianhua','meilin','shixia','shangxiasha',
+                 'shawei','shangbu','xiangmihu','xiangmeibei','xinzhou1','yuanling','yinhu','zhuzilin',
+                 'baishizhou','daxuecheng3','hongshuwan','houhai','huaqiaocheng1','kejiyuan','nanshanzhongxin','nantou','qianhai','shekou','shenzhenwan','xili1',
+                 'baoanzhongxin','bihai1','fanshen','fuyong','songgang','shajing','shiyan','taoyuanju','xinan','xicheng1','xixiang',
+                 'bantian','guanlan','hongshan6','longhuazhongxin','longhuaxinqu','minzhi','meilinguan','shangtang','shiyan']
+#Count 一共采集多少个商圈
+len(business_area)
+
+## 三、采集数据封包
+#方案二（省去清洗） 
+def house_info_2(single_soup):
+    # 设立一个List
+    house_info = []
+    # 整个页面的data Elements
+    total_div = single_soup.find_all('div',class_="content__list--item--main")
+    for house in total_div:
+        try:
+            #房源编号
+            house_url = house.find('a',class_='twoline').get('href').replace('/zufang/','').replace('.html','')
+            #房屋名称
+            house_title = house.find('a',class_="twoline").text.split(" ")[10]
+            #房屋户型
+            house_type = house.find('a',class_="twoline").text.split(" ")[11]
+            #房屋格局（复式、跃层等等）
+            house_aspect = house.find('a',class_="twoline").text.split(" ")[12]
+            #房屋行政区
+            house_district = house.find_all('a',target="_blank")[1].text
+            #房屋商圈
+            house_business_area =house.find_all('a',target="_blank")[2].text
+            #楼盘名称
+            resblock_name = house.find_all('a',target="_blank")[3].text
+            #房屋面积
+            house_area = house.find('p',class_="content__list--item--des").text.split("/")[1].replace(" ","").replace('\n', '')
+            #房屋朝向（东南西北）
+            house_aspect_2 = house.find('p',class_="content__list--item--des").text.split("/")[2].replace(" ","").replace('\n', '')
+            #房屋户型+卫生间个数
+            house_type_2 = house.find('p',class_="content__list--item--des").text.split("/")[3].replace(" ","").replace('\n', '')
+            #房屋楼层
+            house_floor = house.find('p',class_="content__list--item--des").text.split("/")[4].replace(" ","").replace('\n', '')
+            #贝壳标签Label
+            house_label = house.find('p',class_="content__list--item--bottom oneline").text.replace('\n', ' ')
+            #是否品牌方-Brand
+            house_brand = house.find('p',class_="content__list--item--brand oneline").text.replace('\n', ' ')
+            #价格Price
+            house_price = house.find('span',class_="content__list--item-price").text.replace(' 元/月','')
+            # 汇总
+            list1 = [house_title,house_type,house_aspect,house_district,house_business_area,resblock_name,house_area,house_aspect_2,
+                    house_type_2,house_floor,house_label,house_brand,house_price,house_url]
+            house_info.append(list1)
+            #防止数据丢失
+        except (IndexError,AttributeError,AttributeError,AttributeError,AttributeError):
+            pass
+    return house_info
+
+## 四、爬取
+#Count是用来计算循环页数
+count = 0
+#house_all_info是用来过渡采集数据
+house_all_info = []
+#在商圈内循环
+for single_business_area in business_area:
+    i = 1
+    #bug_times 用来尽量在同商圈内使得采集数据更全，逻辑在下面
+    bug_times = 1
+    single_url = 'https://sz.zu.ke.com/zufang/{}/pg{}rt200600000001/#contentList'.format(single_business_area,i)
+    while count<=5000:
+        time.sleep(0.5)
+        print('开始收集',single_url)
+        single_responce = requests.get(single_url)
+        single_soup = bs(single_responce.text,'lxml')
+        house_all_info.append( house_info_2(single_soup))
+        
+        try:
+            #贝壳网页上显示页数（用来判断）
+            pages = int(single_soup.find('div',class_='content__pg').get("data-totalpage"))
+            #贝壳网页上显示套数（用来判断）
+            total_num = int(single_soup.find('span',class_='content__title--hl').text)
+            #商圈中文名称（用来判断）
+            chinese_sba = single_soup.find('p',class_='content__title').text.replace(' ','').split('\n')[2].replace('深圳','').replace('租房','')
+        except (IndexError,AttributeError,AttributeError,AttributeError,AttributeError,KeyboardInterrupt,KeyboardInterrupt,KeyboardInterrupt):
+            pass
+        i += 1
+        
+        final_house_info = []
+        for house_info in house_all_info:
+            for house_single_info in house_info:
+                final_house_info.append(house_single_info)
+        test_df = pd.DataFrame(final_house_info).drop_duplicates()
+        print(chinese_sba)
+        print(len(test_df[test_df[4]==chinese_sba]))
+        #先挨个页数爬取    
+        if i <= pages:
+            single_url = 'https://sz.zu.ke.com/zufang/{}/pg{}rt200600000001/#contentList'.format(single_business_area,i)
+        #如果不够显示套数再在此商圈页面爬取最高不超过80页次
+        elif len(test_df[test_df[4]==chinese_sba]) < (total_num) and bug_times <=80:
+            single_url = 'https://sz.zu.ke.com/zufang/{}/pg{}rt200600000001/#contentList'.format(single_business_area,random.randint(1,pages))
+            bug_times += 1
+        else:
+            break
+        count += 1
+        print('收集第{}页完毕'.format(count))
